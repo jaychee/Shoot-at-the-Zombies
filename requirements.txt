@@ -3,3 +3,5 @@ opencv-python
 numpy
 pywin32
 pynput
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0

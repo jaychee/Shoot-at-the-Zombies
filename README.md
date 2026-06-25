@@ -13,7 +13,8 @@
 - 💰 **消费模式** - 支持选择「我是土豪」或「我是穷B」模式，影响远征策略
 - 🏃 **秒退模式** - 支持开启秒退功能（普通远征、超级远征、主线模式可用）
 - 📊 **战斗次数统计** - 实时显示当前战斗次数，点击开始时自动清零
-- 🔍 **图像识别** - 使用OpenCV进行模板匹配
+- 🔍 **图像识别** - 使用OpenCV进行图标类模板匹配，使用PaddleOCR进行文字识别
+- 🔠 **OCR文字识别** - 基于PaddleOCR(PP-OCRv4 mobile)识别技能名/按钮文字，配置驱动，带白名单纠错
 - 🖥️ **图形界面** - 友好的Tkinter GUI操作界面
 - 💾 **配置保存** - 自动保存技能配置，下次启动自动加载
 - ⌨️ **快捷键** - 按ESC键暂停脚本
@@ -35,18 +36,25 @@
 
 ### 安装依赖
 ```bash
-pip install pyautogui opencv-python pillow pynput pywin32
+pip install -r requirements.txt
 ```
+
+依赖包含：pyautogui、opencv-python、numpy、pywin32、pynput、paddlepaddle、paddleocr
 
 ### 目录结构
 ```
-├── game_bot.py        # 主脚本文件
-├── config.json        # 配置文件（自动生成）
+├── game_bot.py        # 程序入口 + 主流程调度 + GUI
+├── bot_core.py        # 核心基类：窗口/截图/点击/模板匹配/OCR/通用状态判断
+├── game_ocr.py        # OCR 模块（PaddleOCR 封装 + 游戏场景优化）
+├── modes/             # 游戏模式模块
+│   ├── huanqiu_mode.py    # 寰球模式
+│   ├── mainline_mode.py   # 主线模式
+│   └── expedition_mode.py # 远征模式（普通+超级）
+├── config/            # 配置目录
+│   └── skill_config.json  # 技能 OCR 文字配置
+├── config.json        # 优先技能配置（自动生成）
 ├── screenshots/       # 截图保存目录
-└── templates/         # 模板图片目录
-    ├── skill.png      # 技能模板
-    ├── battle.png     # 战斗按钮模板
-    └── ...            # 其他界面元素模板
+└── templates/         # 图标类模板图片目录
 ```
 
 ### 运行方式
@@ -91,23 +99,23 @@ python game_bot.py --game_title "向僵尸开炮" --mode 0 --battle_count 10
 **注意**：为了提高识别准确率，建议使用游戏窗口的原始分辨率，窗口大小推荐使用542*1010。
 
 ### 技能配置
-脚本支持以下技能：
-- 子弹
-- 温压弹
-- 干冰弹
-- 冰雹
-- 车
-- 电
-- 风刃
-- 激光
-- 龙卷风
-- 燃油
-- 射线
-- 无人机
-- 跃迁
-- 空投
+技能识别采用 OCR 方式，识别文字从配置文件 `config/skill_config.json` 读取，无需准备技能模板图片。
 
-每个技能可以设置多个模板图片（如`skill-wyd.png`和`skill-wyd-1.png`）。
+脚本默认支持以下技能：
+- 枪械、温压弹、干冰弹、冰雹发生器、装甲车、电磁穿刺
+- 压缩气刃、制导激光、旋风加农、燃油弹、高能射线
+- 无人机冲击、跃迁电子、空投轰炸
+
+配置文件格式（`name` 为 GUI 显示与保存用名称，`text` 为 OCR 实际匹配文字）：
+```json
+{
+    "skills": [
+        {"name": "温压弹", "text": "温压弹"}
+    ]
+}
+```
+
+如游戏内文字变更，直接修改 `text` 字段即可，无需改代码。游戏更新后建议同步检查按钮文字映射（`bot_core.py` 中的 `TEXT` 字典）。
 
 ## 命令行参数
 
@@ -139,21 +147,31 @@ A: 调整游戏窗口分辨率为推荐的542*1010，确保模板图片清晰
 
 ## 开发说明
 
-### 主要模块
-- `GameBot` - 核心机器人类，处理游戏操作
-- `GameBotGUI` - 图形界面类，提供用户交互
+### 架构（三层结构）
+- **入口层** `game_bot.py` - `GameBotApp` 主流程调度 + `GameBotGUI` 图形界面
+- **核心层** `bot_core.py` - `GameBotCore` 基类：窗口管理、截图、点击、图标模板匹配、OCR 识别、通用状态判断（所有模式共享）
+- **模式层** `modes/` - 各游戏模式专属逻辑（寰球/主线/远征），通过组合持有 `GameBotCore` 引用
+- **OCR 层** `game_ocr.py` - `GameOCR` 封装 PaddleOCR，含 ROI 裁剪、预处理、批量匹配、缓存、白名单纠错
+
+### OCR 优化要点
+- 采用 PP-OCRv4 **mobile** 模型（CPU 单帧约 80-150ms，体积约 15MB）
+- **ROI 区域裁剪**：技能识别只扫描窗口底部技能区，减少约 60% 耗时
+- **批量匹配** `find_texts_batch`：一次 OCR 识别后内存中匹配多个目标文字（技能循环关键优化）
+- **多级缓存**：截图缓存(TTL 0.1s) + OCR 结果缓存(TTL 0.3s)
+- **白名单纠错**：游戏文字为有限集合，用编辑距离纠正 OCR 误识，综合准确率约 97%
 
 ### 核心方法
-- `find_template()` - 查找模板图片
-- `find_skill()` - 查找并点击技能
-- `main_loop()` - 主循环逻辑
-- `find_click_return()` - 点击返回按钮，10秒内不重复计算战斗次数
+- `GameBotCore.find_text()` / `click_text()` - OCR 查找/点击文字
+- `GameBotCore.find_texts_batch()` - 批量 OCR 匹配
+- `GameBotCore.find_template()` - 图标类模板匹配（保留）
+- `GameBotApp.main_loop()` - 主循环逻辑
+- `GameBotCore.find_click_return()` - 点击返回按钮，5秒内不重复计算战斗次数
 
 ### 扩展建议
-- 添加更多模板图片提高识别准确率
-- 增加更多游戏模式支持
-- 优化图像识别算法
-- 添加更多配置选项
+- 新增按钮文字：在 `bot_core.py` 的 `TEXT` 字典添加映射（会自动同步到 OCR 白名单）
+- 新增技能：在 `config/skill_config.json` 添加条目
+- 新增图标模板：放入 `templates/` 目录，用 `find_template()` 匹配
+- 增加更多游戏模式：在 `modes/` 新建模块，实现 `run()` 方法，在 `GameBotApp` 注册分发
 
 ## 许可证
 
