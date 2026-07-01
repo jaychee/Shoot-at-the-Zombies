@@ -1,7 +1,14 @@
 pyautogui
 opencv-python
-numpy
+numpy<2
 pywin32
 pynput
-paddlepaddle>=2.6.0
-paddleocr>=2.7.0
+# OCR：PaddleOCR 2.7.x + paddlepaddle 2.6.x（PP-OCRv4 mobile）
+# 说明：PaddleOCR 3.x 默认拉 PP-OCRv6 + 文档矫正流水线，单帧 13-16s 且识别异常；
+#       2.7.x 提供 PP-OCRv4 mobile（~15MB），单帧 5-7s，与本项目 ROI/缓存/白名单设计匹配。
+paddlepaddle==2.6.2
+paddleocr==2.7.3
+# 以下为 paddleocr 2.7.x 的间接依赖，需锁定以兼容 numpy<2（否则会拉新版导致 ABI 冲突）
+scipy<1.13
+scikit-image<0.23
+setuptools

@@ -18,11 +18,35 @@ GAME_WINDOW_W = 542
 GAME_WINDOW_H = 1010
 
 ROI = {
-    "skill_area": (0, 700, GAME_WINDOW_W, GAME_WINDOW_H),
-    "top_buttons": (0, 0, GAME_WINDOW_W, 120),
-    "center_dialog": (80, 300, 462, 700),
-    "team_list": (0, 200, GAME_WINDOW_W, 800),
-    "full": (0, 0, GAME_WINDOW_W, GAME_WINDOW_H),
+    # —— 通用区域（多界面共享）——
+    "full": (0, 0, GAME_WINDOW_W, GAME_WINDOW_H),            # 全屏兜底
+    "top_buttons": (0, 0, GAME_WINDOW_W, 200),               # 顶部状态/活动/领取弹窗（实测活动banner y<200）
+    "bottom_menu": (0, 955, GAME_WINDOW_W, GAME_WINDOW_H),   # 底部主菜单7按钮（实测 y≈974-998，5%面积）
+    "center_dialog": (80, 300, 462, 700),                    # 中央弹窗（确定/领取/选择技能，通用）
+    "settle_area": (80, 600, 462, 900),                      # 结算区（点击屏幕继续/跳过，推断）
+    # —— 大厅专用 ——
+    "difficulty_tab": (150, 240, 400, 290),                  # 大厅难度tab 普通/精英（实测 y≈262，2%面积）
+    "start_button": (180, 800, 380, 860),                    # 大厅开始游戏按钮（实测 215-343,810-845，2%面积）
+    # —— 基地专用 ——
+    "base_entry": (40, 520, 230, 600),                       # 基地-历练大厅入口（实测 105-198,545-572）
+    "expedition_fort": (250, 690, 380, 750),                 # 基地-远征堡垒入口（实测 263-361,707-738）
+    # —— 历练大厅/模式列表专用 ——
+    "mode_list_left": (30, 440, 170, 900),                   # 模式列表左侧入口名（寰球救援99,476/远征100,654）
+    "mode_action_right": (300, 380, 480, 830),               # 模式列表右侧操作（挑战/难度选择，y=405-804）
+    # —— 聊天/招募频道专用（环球抢ticket流程）——
+    "chat_channels": (70, 280, 140, 800),                    # 聊天左侧频道标签列（招募102,304等纵向排列）
+    "ticket_area": (200, 260, 360, 780),                     # 招募频道聊天流的ticket文字（寰球救援ticket x227-345,y300-630）
+    "ticket_digit": (255, 370, 305, 745),                    # ticket 卡片人数数字区（唯一ID，实测 x≈276 y≈395/551/707；用于差分快速检测新票）
+    "multi_challenge": (150, 330, 360, 760),                 # ticket 卡片「多人挑战」文字区（卡片中部，实测 y≈351/506/661；抢票页确认+点击目标）
+    "join_button": (400, 290, 500, 740),                     # ticket 卡片右侧「加入》」按钮列（实测 x≈448，y随卡片滚动；上限740排除底部「快速加入」）
+    "room_status": (200, 810, 360, 860),                     # 队伍房间「等待开始」标志区（抢成功后显示，y≈829；缩窄ROI加速OCR至~100ms）
+    "ready_area": (0, 750, 542, 950),                        # 准备按钮区（抢成功后队伍页面底部）
+    "battle_check": (350, 700, 542, 950),                     # 「佣兵队列」标志区（右下角，抢票成功/进入战斗判断用；实测OCR~450ms）
+    "settle_check": (0, 200, 542, 600),                      # 结算界面标志区（「恭喜获得」在结算页中上部显示）
+    # —— 战斗专用 ——
+    "skill_area": (0, 700, GAME_WINDOW_W, GAME_WINDOW_H),    # 底部技能区（战斗中选技能）
+    # —— 组队/远征（队伍列表）——
+    "team_list": (0, 200, GAME_WINDOW_W, 800),               # 队伍列表（组队/远征，保留）
 }
 
 BUTTON_TEXTS = [
@@ -33,6 +57,12 @@ BUTTON_TEXTS = [
     "点击空白处继续", "点击空白处跳过", "点击屏幕继续",
     "远征一队", "远征二队", "100%", "已激活技能", "等级提升",
     "战斗", "精英掉落",
+    # 招募频道 ticket 卡片的「加入》」按钮（OCR 常误识为「加人》」，两种写法都收录）
+    "加入》", "加人》",
+    # 成功加入队伍后的房间界面标志 / 战斗结算标志
+    "等待开始", "佣兵队列", "恭喜获得",
+    # 招募频道 ticket 卡片中的「多人挑战」文字（抢票页确认标志 + 点击目标）
+    "多人挑战",
 ]
 
 
@@ -65,20 +95,25 @@ class GameOCR:
             print("PaddleOCR 未安装，OCR 功能不可用，请执行 pip install paddlepaddle paddleocr")
             return
         try:
+            # 兼容 PaddleOCR 2.7.x（PP-OCRv4 mobile）。
+            # 2.x 与 3.x 参数名不同，这里统一用 2.x 参数名：
+            #   use_angle_cls / det_db_* / drop_score / ocr_version
             self.ocr = PaddleOCR(
-                use_angle_cls=False,
+                use_angle_cls=False,        # 游戏文字基本水平，关闭角度分类省耗时
                 lang="ch",
                 use_gpu=False,
                 show_log=False,
+                ocr_version="PP-OCRv4",     # 轻量 mobile 版（~15MB）
+                # 检测参数：游戏文字较小且密集，针对性调整
                 det_db_thresh=0.3,
                 det_db_box_thresh=0.5,
-                det_db_unclip_ratio=1.8,
+                det_db_unclip_ratio=1.8,    # 放大文本框，覆盖游戏描边字
                 det_limit_side_len=960,
                 det_limit_type="max",
-                rec_image_shape="3,48,320",
-                drop_score=0.5,
+                # 识别参数
+                drop_score=0.5,             # 丢弃低置信度结果
             )
-            print("PaddleOCR(PP-OCRv4 mobile) 初始化完成")
+            print("PaddleOCR 初始化完成")
         except Exception as e:
             print(f"PaddleOCR 初始化失败: {e}")
             self.ocr = None
@@ -103,9 +138,7 @@ class GameOCR:
         self._whitelist = self._build_whitelist()
 
     def _preprocess(self, image):
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+        return image
 
     def _correct_text(self, raw_text, max_ratio=0.8):
         raw = raw_text.strip()
@@ -136,6 +169,7 @@ class GameOCR:
         if self.ocr is None:
             return []
         try:
+            # PaddleOCR 2.x：ocr.ocr(img, cls=False) -> [[[box4点], (text, score)], ...]
             result = self.ocr.ocr(image, cls=False)
         except Exception as e:
             print(f"OCR 识别出错: {e}")
@@ -143,18 +177,30 @@ class GameOCR:
         items = []
         if not result:
             return items
-        for line in result:
-            if not line:
+        for page in result:
+            if not page:
                 continue
-            for box, (text, conf) in line:
+            for line in page:
+                # line = [box, (text, score)]
+                if not line or len(line) < 2:
+                    continue
+                box, text_score = line[0], line[1]
+                text = text_score[0] if text_score else ""
+                conf = float(text_score[1]) if len(text_score) > 1 else 0.0
                 if not text:
                     continue
-                xs = [p[0] for p in box]
-                ys = [p[1] for p in box]
+                xs = [float(p[0]) for p in box]
+                ys = [float(p[1]) for p in box]
                 cx = (min(xs) + max(xs)) / 2.0
                 cy = (min(ys) + max(ys)) / 2.0
                 items.append(
-                    {"text": text, "box": box, "confidence": float(conf), "cx": cx, "cy": cy}
+                    {
+                        "text": text,
+                        "box": [[float(p[0]), float(p[1])] for p in box],
+                        "confidence": conf,
+                        "cx": cx,
+                        "cy": cy,
+                    }
                 )
         return items
 
@@ -249,6 +295,36 @@ class GameOCR:
             if ratio >= threshold:
                 matches.append((item["cx"], item["cy"]))
         return matches
+
+    def find_all_digits(self, image, roi=None, min_len=2):
+        """识别图像中的纯数字串（用于 ticket 人数ID，唯一标识一张票）。
+        直接走原始OCR（不经白名单纠正，因数字不在白名单），返回 [(cx, cy, text), ...]，
+        坐标已按 roi 偏移回原图。
+        """
+        offset_x, offset_y = 0, 0
+        work = image
+        if roi is not None:
+            x1, y1, x2, y2 = roi
+            h, w = image.shape[:2]
+            x1 = max(0, min(int(x1), w))
+            y1 = max(0, min(int(y1), h))
+            x2 = max(0, min(int(x2), w))
+            y2 = max(0, min(int(y2), h))
+            if x2 <= x1 or y2 <= y1:
+                return []
+            work = image[y1:y2, x1:x2]
+            offset_x, offset_y = x1, y1
+        raw_items = self._raw_ocr(work)
+        results = []
+        for item in raw_items:
+            txt = item["text"].strip()
+            # 仅保留数字（允许少量误识混入，但主体须为数字）
+            digits = "".join(c for c in txt if c.isdigit())
+            if len(digits) >= min_len:
+                results.append(
+                    (int(item["cx"]) + offset_x, int(item["cy"]) + offset_y, digits)
+                )
+        return results
 
     def find_texts_batch(self, image, target_texts, threshold=0.8, roi=None, correct_ratio=0.8):
         items = self.recognize(image, roi=roi, correct_ratio=correct_ratio)

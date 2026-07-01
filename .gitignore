@@ -104,6 +104,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv27/
 env/
 venv/
 ENV/
@@ -136,6 +137,20 @@ keys/
 templates_decrypted/
 generate_keys.py
 config.json
+
+# 一次性调试/实验脚本（非运行必须，仅本地保留）
+all_recruit.py
+grid_recruit.py
+multi_buttons.py
+debug_coord.py
+test_click_center.py
+verify_coord.py
+verify_coord2.py
+verify_coord_system.py
+PLAN_OCR_ENGINE.md
+
+# Windows 重定向产生的空文件
+nul
 
 # macOS
 .DS_Store

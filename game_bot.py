@@ -71,13 +71,19 @@ class GameBotApp:
                 time.sleep(5)
                 continue
 
-            core.find_click_receive()
-            core.find_click_home_close()
-            core.find_click_reconnection()
-            core.find_click_sure()
-            core.find_click_return()
+            # 公共模块：领取/关闭/重连/确定/返回 等通用处理。
+            # 当前 skip_public_ops=True，主流程暂不执行这些公共操作，
+            # 直接进入模式分发。方法定义均保留在 bot_core，需要时关闭开关即可恢复。
+            if not getattr(core, "skip_public_ops", False):
+                core.find_click_receive()
+                core.find_click_home_close()
+                core.find_click_reconnection()
+                core.find_click_sure()
+                core.find_click_return()
 
-            while True and core.running:
+            # 战斗中循环：技能/自动关闭/重连/关闭/返回/超时退出。
+            # 同样受 skip_public_ops 控制，暂不执行。
+            while True and core.running and not getattr(core, "skip_public_ops", False):
                 battling = core.find_battling()
                 if not battling:
                     break
@@ -165,7 +171,7 @@ class GameBotGUI:
         self.rich_mode_label = ttk.Label(self.root, text="消费模式:")
         self.rich_mode_label.grid(row=2, column=0, padx=10, pady=5, sticky=tk.W)
         self.rich_mode_frame = ttk.Frame(self.root)
-        self.rich_mode_var = tk.IntVar(value=0)
+        self.rich_mode_var = tk.IntVar(value=1)
         ttk.Radiobutton(
             self.rich_mode_frame, text="我是土豪", variable=self.rich_mode_var, value=0
         ).pack(side=tk.LEFT, padx=5)
@@ -326,6 +332,15 @@ class GameBotGUI:
             if not game_title:
                 messagebox.showerror("错误", "请输入游戏窗口标题")
                 return
+
+            try:
+                temp_core = GameBotCore(game_title=game_title, init_ocr=False)
+                if temp_core.resize_game_window(move_to_origin=True):
+                    self.status_var.set("游戏窗口已调整至(0,0) 542x1010")
+                else:
+                    messagebox.showwarning("提示", "未找到游戏窗口，无法自动调整大小，请确认游戏已打开")
+            except Exception as e:
+                print(f"调整游戏窗口失败: {e}")
 
             self.bot = GameBotApp(
                 game_title,

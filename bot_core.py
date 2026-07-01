@@ -36,6 +36,7 @@ TEXT = {
     "huanqiu_challenge": "寰球救援",
     "huanqiu_invite": "邀请",
     "huanqiu_post_recruitment": "发布招募",
+    "recruitment": "招募",
     "expedition_challenge": "挑战",
     "expedition_continue": "点击空白处继续",
     "expedition_difficulty": "困难",
@@ -50,6 +51,11 @@ TEXT = {
     "battling_elite": "精英掉落",
     "grade_level": "等级提升",
     "home_close_text": "已置换",
+    "join_button": "加人》",  # 招募频道 ticket「加入》」按钮（OCR 实测多误识为「加人》」，按此匹配最稳）
+    "wait_start": "等待开始",  # 成功加入寰球队伍后的房间界面标志（房主未开始时显示）
+    "mercenary_queue": "佣兵队列",  # 房主开始战斗后，寰球队伍房间界面会显示（确认已进入战斗）
+    "congrats": "恭喜获得",  # 战斗结算界面标志（出现=战斗结束，可点返回领取奖励）
+    "multi_challenge": "多人挑战",  # 招募频道 ticket 卡片文字（抢票页确认标志 + 点击目标）
 }
 
 
@@ -82,6 +88,13 @@ class GameBotCore:
         self.wait_time = wait_time
         self.battle_count = 0
         self.last_battle_count_time = 0
+        self.grab_count = 0  # 抢到票次数（每次成功加入队伍+1）
+        self.on_grab_count_changed = None  # 抢票次数变化回调（GUI刷新用）
+        self.on_log = None  # 日志回调（GUI实时显示当前步骤用），签名 on_log(text)
+
+        # 主流程公共模块开关：True=跳过 main_loop 中的公共操作与战斗循环，
+        # 直接进入模式分发（方法定义仍保留在 bot_core，需要时改 False 即可恢复）
+        self.skip_public_ops = True
 
         if getattr(sys, "frozen", False):
             self.template_dir = os.path.join(sys._MEIPASS, "templates")
@@ -105,6 +118,15 @@ class GameBotCore:
             self.ocr = GameOCR(cache_ttl=0.3, skills=self.skills)
             self.ocr.add_whitelist(list(TEXT.values()))
 
+    def _log(self, text):
+        """统一日志输出：同时打印到控制台并触发 on_log 回调（供 GUI 实时显示）。"""
+        print(text, flush=True)
+        if self.on_log:
+            try:
+                self.on_log(text)
+            except Exception:
+                pass
+
     def _preload_templates(self):
         if not os.path.exists(self.template_dir):
             print(f"模板目录不存在: {self.template_dir}")
@@ -123,7 +145,12 @@ class GameBotCore:
     def find_game_window(self):
         hwnd = win32gui.FindWindow(None, self.game_title)
         if hwnd:
-            win32gui.SetForegroundWindow(hwnd)
+            # SetForegroundWindow 在调用进程非前台时会抛 pywintypes.error，
+            # 但窗口已存在、矩形也能取到，不应因此中断整个流程，故容错处理。
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except Exception as e:
+                print(f"SetForegroundWindow 失败(可忽略): {e}")
             left, top, right, bottom = win32gui.GetWindowRect(hwnd)
             self.game_window = (left, top, right - left, bottom - top)
             print(f"找到游戏窗口: {self.game_window}")
@@ -132,7 +159,7 @@ class GameBotCore:
             print("未找到游戏窗口")
             return False
 
-    def resize_game_window(self, width=542, height=1010):
+    def resize_game_window(self, width=542, height=1010, move_to_origin=False):
         hwnd = win32gui.FindWindow(None, self.game_title)
         if hwnd:
             left, top, right, bottom = win32gui.GetWindowRect(hwnd)
@@ -143,6 +170,8 @@ class GameBotCore:
             border_height = (bottom - top) - client_height
             window_width = width + border_width
             window_height = height + border_height
+            if move_to_origin:
+                left, top = 0, 0
             win32gui.MoveWindow(hwnd, left, top, window_width, window_height, True)
             self.game_window = (left, top, width, height)
             print(f"游戏窗口已调整为: {self.game_window}")
@@ -185,8 +214,8 @@ class GameBotCore:
         self._screenshot_time = now
         return self._screenshot_bgr
 
-    def save_screenshot(self, filename=None):
-        img = self.take_screenshot()
+    def save_screenshot(self, filename=None, force_new=False):
+        img = self.take_screenshot(force_new=force_new)
         if img is not None:
             if not filename:
                 filename = f"{self.screenshot_dir}/{int(time.time())}.png"
@@ -212,10 +241,10 @@ class GameBotCore:
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
     def click_fast_batch(self, positions):
+        # 注意：win32api.mouse_event 对部分游戏（含本作）无效，
+        # 点击事件不被接收。这里改用 pyautogui 真实模拟点击确保生效。
         for x, y in positions:
-            win32api.SetCursorPos((int(x), int(y)))
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            pyautogui.click(int(x), int(y))
             time.sleep(0.05)
 
     def press_key(self, key, presses=1, interval=0.1, human_like=True):
@@ -249,7 +278,7 @@ class GameBotCore:
             return (center_x, center_y)
         return None
 
-    def find_all_templates(self, template_name, threshold=0.8):
+    def find_all_templates(self, template_name, threshold=0.8, roi=None, nms_dist=20):
         if template_name in self.template_cache:
             template = self.template_cache[template_name]
         else:
@@ -263,14 +292,31 @@ class GameBotCore:
         img = self.take_screenshot()
         if img is None:
             return []
-        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
-        locations = np.where(result >= threshold)
-        matches = []
         h, w = template.shape[:2]
+        # ROI 裁剪：只在指定区域匹配，大幅提速
+        offset_x, offset_y = 0, 0
+        work = img
+        if roi is not None:
+            x1, y1, x2, y2 = roi
+            hh, ww = img.shape[:2]
+            x1 = max(0, min(int(x1), ww))
+            y1 = max(0, min(int(y1), hh))
+            x2 = max(0, min(int(x2), ww))
+            y2 = max(0, min(int(y2), hh))
+            if x2 <= x1 or y2 <= y1:
+                return []
+            work = img[y1:y2, x1:x2]
+            offset_x, offset_y = x1, y1
+        result = cv2.matchTemplate(work, template, cv2.TM_CCOEFF_NORMED)
+        locations = np.where(result >= threshold)
+        # 非极大值抑制：相邻匹配点合并为一个（避免同一按钮返回大量重叠坐标）
+        matches = []
+        nms2 = nms_dist * nms_dist
         for pt in zip(*locations[::-1]):
-            center_x = self.game_window[0] + pt[0] + w // 2
-            center_y = self.game_window[1] + pt[1] + h // 2
-            matches.append((center_x, center_y))
+            cx = self.game_window[0] + pt[0] + w // 2 + offset_x
+            cy = self.game_window[1] + pt[1] + h // 2 + offset_y
+            if all((cx - px) ** 2 + (cy - py) ** 2 > nms2 for px, py in matches):
+                matches.append((cx, cy))
         return matches
 
     def click_template(self, template_name, sleep_after=0.05):
@@ -342,58 +388,142 @@ class GameBotCore:
 
     # —— 通用状态判断 ——
     def find_click_receive(self):
-        self.click_text(TEXT["receive"])
+        self.click_text(TEXT["receive"], roi=ROI["top_buttons"])
 
     def find_click_im(self):
         self.click_template("im.png")
 
     def find_click_continue(self):
-        self.click_text(TEXT["continue"])
+        self.click_text(TEXT["continue"], roi=ROI["settle_area"])
 
     def find_team_up(self):
-        return self.find_template("recruitment-1.png")
+        """检查招募频道标签是否可见（用于判断聊天框是否打开）。"""
+        return self.find_text(TEXT["recruitment"], roi=ROI["chat_channels"])
 
     def find_click_recruitment(self):
-        while True and self.running:
-            team_up = self.find_team_up()
-            if not team_up:
-                recruitments = ["recruitment.png"]
-                in_recruitment = False
-                for recruitment in recruitments:
-                    xy = self.find_template(recruitment)
-                    if xy:
-                        self.click(*xy)
-                        in_recruitment = True
-                        break
-                if not in_recruitment:
-                    print("未找到招募页面")
-                    break
-            self.find_click_reconnection()
-            for i in range(20):
-                try:
-                    huanqiu_positions = self.find_all_text(TEXT["huanqiu"])
-                    if huanqiu_positions:
-                        positions = []
-                        for pos in huanqiu_positions:
-                            pos = (pos[0] + 150, pos[1])
-                            positions.append(pos)
-                        if positions:
-                            positions.reverse()
-                            self.click_fast_batch(positions)
-                    else:
-                        leave_button = self.find_leave_button()
-                        if leave_button:
-                            if not self.find_in_huanqiu_team():
-                                self.click(*leave_button)
-                                time.sleep(0.04)
-                                self.find_click_sure()
-                except:
-                    print("查找环球按钮时出错")
+        """点击招募频道标签，切换到招募频道。
+        招募标签是聊天框打开后固定的 UI 元素（实测在 102,304），
+        OCR 对这种小标签识别不稳定，故 OCR 找不到时退化为点固定坐标。
+        """
+        pos = self.find_text(TEXT["recruitment"], roi=ROI["chat_channels"])
+        if pos:
+            self.click(*pos)
+        else:
+            # OCR 识别不到（小标签识别不稳定），退化为点击实测固定位置
+            self.click(102, 304)
+
+    def find_click_huanqiu_ticket(self, deadline=None):
+        """抢寰球救援 ticket（固定坐标无限点击法）。
+        流程：
+        1. 切到招募频道后（由 huanqiu_mode._open_recruitment_channel 完成），
+           识别页面上的「多人挑战」文字坐标，识别到 3 个即确认已在抢票页，记录这 3 个固定坐标。
+        2. 无限循环点击这 3 个坐标（不做新票/死票判定），直到抢成功返回 True。
+           抢成功的判断：出现「等待开始」(进入队伍房间) 或「佣兵队列」(已进入战斗)，
+           满足任一即视为抢到票（与后续"进入战斗"判断条件一致）。
+        3. deadline 超时返回 False。
+
+        说明：「等待开始」(小ROI,~400ms) 每轮都查；「佣兵队列」(大ROI,~1s) 每8轮查一次。
+        点击「多人挑战」文字坐标本身即可触发加入（实测该位置可加入）。
+        """
+        round_cnt = 0
+        click_targets = None  # 记录的 3 个「多人挑战」固定坐标
+        locate_deadline = time.time() + 30  # 最多等 30s 识别到 3 个坐标
+        SKILL_CHECK_EVERY = 8  # 每隔8轮才查一次「已激活技能」(大ROI慢~2.5s)，平衡效率与覆盖
+
+        while self.running:
+            if deadline is not None and time.time() > deadline:
+                self._log(f"[抢ticket] 抢票超时(轮{round_cnt})，退出抢票循环")
+                return False
+            round_cnt += 1
+
+            # 阶段1：识别 3 个「多人挑战」坐标，确认在抢票页
+            if click_targets is None:
+                positions = self.find_all_text(
+                    TEXT["multi_challenge"], roi=ROI["multi_challenge"]
+                )
+                if len(positions) >= 3:
+                    # 按 y 降序（底部=最新=优先点击）
+                    click_targets = sorted(positions, key=lambda p: p[1], reverse=True)[:3]
+                    self._log(
+                        f"[抢ticket] ✓ 已在抢票页，记录3个「多人挑战」坐标: {click_targets}"
+                    )
                 else:
-                    print("未找到招募页面")
+                    if time.time() > locate_deadline:
+                        self._log(
+                            f"[抢ticket] 30s内未识别到3个「多人挑战」(仅{len(positions)}个)，"
+                            f"按现有坐标继续抢"
+                        )
+                        click_targets = sorted(
+                            positions, key=lambda p: p[1], reverse=True
+                        ) if positions else [(280, 395), (280, 550), (280, 700)]
+                    else:
+                        self._log(
+                            f"[抢ticket] 等待抢票页加载(识别到{len(positions)}个「多人挑战」)..."
+                        )
+                        time.sleep(1.0)
+                        continue
+
+            # 阶段2：无限循环点击固定坐标，直到抢成功
+            # 2a. 判断是否抢成功：
+            #   - 「等待开始」(小ROI,~400ms) 每轮都查（抢票主标志：进入队伍房间）
+            #   - 「佣兵队列」(大ROI,~1s) 每 SKILL_CHECK_EVERY 轮才查一次
+            #     （房主已开战进入战斗状态，与"进入战斗"判断条件一致）
+            #     满足任一即视为抢到票
+            wait_start = self.find_text(TEXT["wait_start"], roi=ROI["room_status"])
+            if wait_start:
+                self._log(f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「等待开始」@{wait_start}")
+                self.grab_count += 1
+                if self.on_grab_count_changed:
+                    self.on_grab_count_changed(self.grab_count)
+                return True
+            if round_cnt % SKILL_CHECK_EVERY == 0:
+                mercenary = self.find_text(TEXT["mercenary_queue"], roi=ROI["battle_check"])
+                if mercenary:
+                    self._log(
+                        f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「佣兵队列」@{mercenary}（已进入战斗）"
+                    )
+                    self.grab_count += 1
+                    if self.on_grab_count_changed:
+                        self.on_grab_count_changed(self.grab_count)
+                    return True
+            # 2b. 点击记录的 3 个固定坐标
+            for x, y in click_targets:
+                pyautogui.click(int(x), int(y))
+            # 低频日志
+            if round_cnt % 10 == 0:
+                self._log(
+                    f"[抢ticket] 轮{round_cnt} 点击{len(click_targets)}个固定坐标 {click_targets}"
+                )
+        # running 被置 False（ESC/停止）退出循环
+        self._log(f"[抢ticket] 抢票循环被中断(轮{round_cnt})")
+        return False
+
+    # —— 环球抢票后续流程：等待战斗 / 等待结算 / 返回主页 ——
+    def sleep_interruptible(self, seconds, tag=""):
+        """可中断等待：分片 sleep，检测 self.running 以便 ESC 时及时退出。"""
+        end = time.time() + seconds
+        while self.running and time.time() < end:
+            time.sleep(min(0.5, end - time.time()))
+        if tag:
+            print(f"[环球] {tag} 等待{seconds}s {'完成' if self.running else '(已中断)'}", flush=True)
+
+    def check_mercenary_queue(self):
+        """检查页面是否有「佣兵队列」（房主已开始战斗的标志）。"""
+        return self.find_text(TEXT["mercenary_queue"], roi=ROI["battle_check"])
+
+    def check_congrats(self):
+        """检查页面是否有「恭喜获得」（战斗结算标志）。"""
+        return self.find_text(TEXT["congrats"], roi=ROI["settle_check"])
+
+    def click_return_button(self):
+        """点击结算页的「返回」按钮回到寰球救援主页。"""
+        # 返回按钮一般在结算页底部偏中
+        return self.click_text(TEXT["return"], roi=ROI["settle_area"]) or self.click_text(
+            TEXT["return"], roi=ROI["ready_area"]
+        )
 
     def find_in_huanqiu_team(self):
-        if self.find_text(TEXT["in_huanqiu_team"]):
+        if self.find_text(TEXT["in_huanqiu_team"], roi=ROI["top_buttons"]):
             return True
         return False
 
@@ -402,29 +532,29 @@ class GameBotCore:
             ["home-close.png", "home-close-1.png", "home-close-2.png"]
         ):
             return
-        self.click_text(TEXT["home_close_text"])
+        self.click_text(TEXT["home_close_text"], roi=ROI["top_buttons"])
 
     def find_click_close(self):
         if self.click_first_template(["close.png"]):
             return True
         return self.click_first_text(
-            [TEXT["auto_close"], TEXT["battling_elite"]]
+            [TEXT["auto_close"], TEXT["battling_elite"]], roi=ROI["center_dialog"]
         )
 
     def find_click_reconnection(self):
         self.click_text("重新连接")
 
     def find_huanqiu(self):
-        return self.find_text(TEXT["huanqiu"])
+        return self.find_text(TEXT["huanqiu"], roi=ROI["mode_list_left"])
 
     def find_click_start_button(self):
-        return self.click_text(TEXT["battle"])
+        return self.click_text(TEXT["battle"], roi=ROI["bottom_menu"])
 
     def find_click_sure(self):
-        self.click_text(TEXT["sure"])
+        self.click_text(TEXT["sure"], roi=ROI["center_dialog"])
 
     def find_click_auto_close(self):
-        self.click_text(TEXT["auto_close"])
+        self.click_text(TEXT["auto_close"], roi=ROI["center_dialog"])
 
     def _skill_name_to_text(self, name):
         for s in self.skills:
@@ -433,7 +563,7 @@ class GameBotCore:
         return name
 
     def find_click_skill(self):
-        self.click_text(TEXT["think_tank"])
+        self.click_text(TEXT["think_tank"], roi=ROI["skill_area"])
         if not self.find_text(TEXT["choose_skill"], roi=ROI["center_dialog"]):
             return None
 
@@ -476,7 +606,7 @@ class GameBotCore:
         self.click_template("return-1.png")
 
     def find_click_return(self):
-        return_button = self.find_text(TEXT["return"])
+        return_button = self.find_text(TEXT["return"], roi=ROI["top_buttons"])
         if return_button:
             self.current_battle_time = 0
             if self.mode not in [2, 3]:
@@ -519,24 +649,24 @@ class GameBotCore:
         return False
 
     def find_click_exit(self):
-        self.click_text(TEXT["exit"])
+        self.click_text(TEXT["exit"], roi=ROI["center_dialog"])
 
     def find_click_card(self):
-        pos = self.find_text(TEXT["card_normal"])
+        pos = self.find_text(TEXT["card_normal"], roi=ROI["difficulty_tab"])
         if pos:
             self.click(*pos)
             time.sleep(0.2)
-            start = self.find_text(TEXT["card_start"])
+            start = self.find_text(TEXT["card_start"], roi=ROI["start_button"])
             if start:
                 self.click(*start)
                 time.sleep(0.1)
 
     def find_click_orange_start_game(self):
-        self.click_text(TEXT["orange_start"])
+        self.click_text(TEXT["orange_start"], roi=ROI["start_button"])
 
     def find_expedition_team(self):
         pos = self.find_first_text(
-            [TEXT["expedition_team"], TEXT["expedition_team_2"]]
+            [TEXT["expedition_team"], TEXT["expedition_team_2"]], roi=ROI["team_list"]
         )
         return pos is not None
 
@@ -548,32 +678,32 @@ class GameBotCore:
         return None
 
     def find_click_base(self):
-        self.click_text(TEXT["base"])
+        self.click_text(TEXT["base"], roi=ROI["bottom_menu"])
 
     def find_base(self):
-        return self.find_text(TEXT["base"])
+        return self.find_text(TEXT["base"], roi=ROI["bottom_menu"])
 
     def find_click_experience(self):
-        self.click_text(TEXT["experience"])
+        self.click_text(TEXT["experience"], roi=ROI["base_entry"])
 
     def find_click_expedition_challenge(self):
-        self.click_text(TEXT["expedition_challenge"])
+        self.click_text(TEXT["expedition_challenge"], roi=ROI["mode_action_right"])
 
     def find_expedition_difficulty(self):
-        if self.find_text(TEXT["expedition_difficulty"]):
+        if self.find_text(TEXT["expedition_difficulty"], roi=ROI["difficulty_tab"]):
             return True
         return False
 
     def find_expedition_normal(self):
-        if self.find_text(TEXT["expedition_normal"]):
+        if self.find_text(TEXT["expedition_normal"], roi=ROI["difficulty_tab"]):
             return True
         return False
 
     def find_click_expedition_team_hall(self):
-        self.click_text(TEXT["expedition_team_hall"])
+        self.click_text(TEXT["expedition_team_hall"], roi=ROI["center_dialog"])
 
     def find_click_expedition_fast_join(self):
-        self.click_text(TEXT["expedition_fast_join"])
+        self.click_text(TEXT["expedition_fast_join"], roi=ROI["center_dialog"])
 
     def find_expedition_tickets(self):
         tickets_icon = ["expedition-tickets.png"]
@@ -590,7 +720,7 @@ class GameBotCore:
         self.expedition_in_team_max_time = time.time() + self.wait_time
 
     def find_click_expedition_ready(self):
-        ready = self.find_text(TEXT["expedition_ready"])
+        ready = self.find_text(TEXT["expedition_ready"], roi=ROI["skill_area"])
         if ready:
             self.click(*ready)
             time.sleep(0.1)
@@ -610,19 +740,19 @@ class GameBotCore:
         return None
 
     def find_leave_button(self):
-        return self.find_text(TEXT["leave"])
+        return self.find_text(TEXT["leave"], roi=ROI["center_dialog"])
 
     def find_click_huanqiu_challenge(self):
-        self.click_text(TEXT["huanqiu_challenge"])
+        self.click_text(TEXT["huanqiu_challenge"], roi=ROI["mode_list_left"])
 
     def find_huanqiu_invite(self):
-        return self.find_text(TEXT["huanqiu_invite"])
+        return self.find_text(TEXT["huanqiu_invite"], roi=ROI["center_dialog"])
 
     def find_click_huanqiu_post_recruitment(self):
-        self.click_text(TEXT["huanqiu_post_recruitment"])
+        self.click_text(TEXT["huanqiu_post_recruitment"], roi=ROI["center_dialog"])
 
     def find_click_start_game_button(self):
-        self.click_text(TEXT["start_game_button"])
+        self.click_text(TEXT["start_game_button"], roi=ROI["start_button"])
 
     def find_expedition_vice_captain(self):
         vice_captain_icon = ["expedition-vice-captain.png"]
@@ -649,16 +779,16 @@ class GameBotCore:
         return None
 
     def find_click_start_challenge(self):
-        self.click_text(TEXT["start_challenge"])
+        self.click_text(TEXT["start_challenge"], roi=ROI["center_dialog"])
 
     def find_expedition_health_100s(self):
-        return self.find_all_text(TEXT["expedition_health_100"])
+        return self.find_all_text(TEXT["expedition_health_100"], roi=ROI["team_list"])
 
     def find_click_expedition_continue(self):
-        self.click_text(TEXT["expedition_continue"])
+        self.click_text(TEXT["expedition_continue"], roi=ROI["settle_area"])
 
     def find_click_think_tank(self):
-        self.click_text(TEXT["think_tank"])
+        self.click_text(TEXT["think_tank"], roi=ROI["skill_area"])
 
     def expedition_in_team(self, in_expedition):
         if not in_expedition:
