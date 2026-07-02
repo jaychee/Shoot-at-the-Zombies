@@ -159,31 +159,15 @@ class HuanqiuMode:
             bot.sleep_interruptible(self.CHECK_INTERVAL, tag=f"等待结算({i+1})")
         return False
 
-    # 聊天图标(气泡)候选坐标(窗口内相对坐标，右侧由上到下排列的图标之一)。
-    # 实测聊天图标在右侧 x≈485-515；与通行证/宝箱/社交等图标纵向堆叠，
-    # 聊天气泡通常在 y≈540-680 之间。这些作为模板匹配失败时的兜底点击点。
-    CHAT_ICON_FALLBACKS = [(500, 560), (500, 600), (500, 640), (500, 680)]
-
     def _click_chat_icon_until_open(self):
         """点击聊天图标直到聊天框打开（检测到「招募」标签），返回是否成功。
-        优先用 im.png 模板匹配；模板失败则按固定候选坐标依次尝试，
-        每次点击后都用「招募」标签 OCR 校验聊天框是否真的打开。
+        find_click_im 内部已做：模板匹配优先(强制新截图) + 固定坐标(514,575)兜底。
+        这里循环重试 3 次，每次点完都用「招募」标签校验聊天框是否真的打开。
         """
         bot = self.bot
         for i in range(3):
-            # 方式A: 模板匹配点聊天图标
             clicked = bot.find_click_im()
-            if clicked:
-                self._log(f"[环球]   第{i+1}次: 模板匹配点击聊天图标")
-            else:
-                # 方式B: 模板未命中，按候选坐标兜底点击
-                cx, cy = self.CHAT_ICON_FALLBACKS[i % len(self.CHAT_ICON_FALLBACKS)]
-                # 转屏幕绝对坐标
-                sx = bot.game_window[0] + cx
-                sy = bot.game_window[1] + cy
-                import pyautogui
-                pyautogui.click(int(sx), int(sy))
-                self._log(f"[环球]   第{i+1}次: 模板未命中，兜底点候选坐标({cx},{cy})")
+            self._log(f"[环球]   第{i+1}次: 点击聊天图标 clicked={clicked}")
             time.sleep(0.9)
             # 校验聊天框是否打开
             if bot.find_team_up():

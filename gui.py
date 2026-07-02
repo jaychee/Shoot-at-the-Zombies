@@ -134,6 +134,14 @@ class HuanqiuGUI:
             self.bot.core.on_grab_count_changed = self._on_grab_changed
             self.bot.core.on_battle_count_changed = self._on_battle_changed
             self.bot.core.on_log = self._append_log  # 关键：实时日志
+            # 启动时自动调整窗口到 (0,0) 542×1010，让所有 ROI/坐标/模板稳定可复现
+            try:
+                if self.bot.core.resize_game_window(542, 1010, move_to_origin=True):
+                    self._append_log("游戏窗口已调整至 (0,0) 542×1010")
+                else:
+                    self._append_log("⚠ 未找到游戏窗口，无法自动调整大小（请确认游戏已打开）")
+            except Exception as e:
+                self._append_log(f"调整窗口失败: {e}")
             # 初始化战绩显示
             self.grab_var.set(f"抢到票: {self.bot.core.grab_count}")
             self.battle_var.set(f"参与战斗: {self.bot.core.battle_count}")

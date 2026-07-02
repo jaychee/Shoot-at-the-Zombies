@@ -255,7 +255,7 @@ class GameBotCore:
         print(f"按下按键: {key}")
 
     # —— 模板匹配（仅图标类保留）——
-    def find_template(self, template_name, threshold=0.8):
+    def find_template(self, template_name, threshold=0.8, roi=None, force_shot=False):
         if template_name in self.template_cache:
             template = self.template_cache[template_name]
         else:
@@ -266,15 +266,29 @@ class GameBotCore:
         if template is None:
             print(f"无法加载模板: {template_name}")
             return None
-        img = self.take_screenshot()
+        img = self.take_screenshot(force_new=force_shot)
         if img is None:
             return None
-        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
+        # ROI 裁剪：只在指定区域匹配，避免全图扫描误匹配（如聊天图标匹配到货币图标）
+        offset_x, offset_y = 0, 0
+        work = img
+        if roi is not None:
+            x1, y1, x2, y2 = roi
+            hh, ww = img.shape[:2]
+            x1 = max(0, min(int(x1), ww))
+            y1 = max(0, min(int(y1), hh))
+            x2 = max(0, min(int(x2), ww))
+            y2 = max(0, min(int(y2), hh))
+            if x2 <= x1 or y2 <= y1:
+                return None
+            work = img[y1:y2, x1:x2]
+            offset_x, offset_y = x1, y1
+        result = cv2.matchTemplate(work, template, cv2.TM_CCOEFF_NORMED)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
         if max_val >= threshold:
             h, w = template.shape[:2]
-            center_x = self.game_window[0] + max_loc[0] + w // 2
-            center_y = self.game_window[1] + max_loc[1] + h // 2
+            center_x = self.game_window[0] + max_loc[0] + w // 2 + offset_x
+            center_y = self.game_window[1] + max_loc[1] + h // 2 + offset_y
             return (center_x, center_y)
         return None
 
@@ -319,8 +333,8 @@ class GameBotCore:
                 matches.append((cx, cy))
         return matches
 
-    def click_template(self, template_name, sleep_after=0.05):
-        pos = self.find_template(template_name)
+    def click_template(self, template_name, sleep_after=0.05, roi=None):
+        pos = self.find_template(template_name, roi=roi)
         if pos:
             self.click(*pos)
             if sleep_after > 0:
@@ -328,9 +342,9 @@ class GameBotCore:
             return True
         return False
 
-    def click_first_template(self, template_names, sleep_after=0.05):
+    def click_first_template(self, template_names, sleep_after=0.05, roi=None):
         for template_name in template_names:
-            pos = self.find_template(template_name)
+            pos = self.find_template(template_name, roi=roi)
             if pos:
                 self.click(*pos)
                 if sleep_after > 0:
@@ -391,7 +405,25 @@ class GameBotCore:
         self.click_text(TEXT["receive"], roi=ROI["top_buttons"])
 
     def find_click_im(self):
-        self.click_template("im.png")
+        """点击聊天图标(气泡)打开聊天框。
+        resize 后聊天气泡固定在窗口内坐标 (514,575)，匹配度0.998稳定命中。
+        优先模板匹配(强制新截图，避免缓存旧帧)；匹配不到则点确认的固定坐标兜底。
+        点击统一用 pyautogui.click(无随机偏移)，避免 self.click 的 ±5px 偏移点偏小图标。
+        返回是否点击(True=已点击，False=未点击)。
+        """
+        import pyautogui
+        # 模板匹配：强制取最新帧，避免 take_screenshot 缓存返回旧界面
+        pos = self.find_template("im.png", force_shot=True)
+        if pos:
+            pyautogui.click(int(pos[0]), int(pos[1]))
+            return True
+        # 兜底：聊天气泡固定坐标(窗口内 514,575)→转屏幕绝对坐标
+        if self.game_window:
+            sx = self.game_window[0] + 514
+            sy = self.game_window[1] + 575
+            pyautogui.click(int(sx), int(sy))
+            return True
+        return False
 
     def find_click_continue(self):
         self.click_text(TEXT["continue"], roi=ROI["settle_area"])

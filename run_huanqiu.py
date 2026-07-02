@@ -21,6 +21,11 @@ def main():
     )
     # 公共模块已由 core.skip_public_ops 全局跳过
     print(f"[init] skip_public_ops={app.core.skip_public_ops}", flush=True)
+    # 启动时自动调整窗口到 (0,0) 542×1010，让所有 ROI/坐标/模板稳定可复现
+    if app.core.resize_game_window(542, 1010, move_to_origin=True):
+        print("[init] 游戏窗口已调整至 (0,0) 542×1010", flush=True)
+    else:
+        print("[init] ⚠ 未找到游戏窗口，无法自动调整大小", flush=True)
     t0 = time.time()
     deadline = t0 + 1800  # 最多跑 30 分钟（含抢票+8分钟战斗等待+结算）
     try:
