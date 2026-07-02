@@ -141,7 +141,15 @@ class HuanqiuGUI:
                 else:
                     self._append_log("⚠ 未找到游戏窗口，无法自动调整大小（请确认游戏已打开）")
             except Exception as e:
-                self._append_log(f"调整窗口失败: {e}")
+                # MoveWindow「拒绝访问」= 当前非管理员权限。
+                # 游戏是微信小程序(WeChatAppEx.exe)，窗口受保护，必须管理员才能调整。
+                # 此时窗口位置/尺寸可能不对，后续坐标会偏，抢票大概率失败。
+                self._append_log(
+                    f"调整窗口失败: {e}\n"
+                    "  → 根因：未以管理员身份运行。微信小程序窗口需管理员权限才能调整。\n"
+                    "  → 解决：请用「启动.bat」启动（会自动请求管理员权限），"
+                    "或右键以管理员身份运行。窗口未调整时抢票坐标会偏移。"
+                )
             # 初始化战绩显示
             self.grab_var.set(f"抢到票: {self.bot.core.grab_count}")
             self.battle_var.set(f"参与战斗: {self.bot.core.battle_count}")
