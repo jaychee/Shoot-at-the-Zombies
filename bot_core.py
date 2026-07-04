@@ -120,11 +120,15 @@ class GameBotCore:
             self.ocr.add_whitelist(list(TEXT.values()))
 
     def _log(self, text):
-        """统一日志输出：同时打印到控制台并触发 on_log 回调（供 GUI 实时显示）。"""
-        print(text, flush=True)
+        """统一日志输出：同时打印到控制台并触发 on_log 回调（供 GUI 实时显示）。
+        自动在每行前面加 [HH:MM:SS] 时间戳。
+        """
+        ts = time.strftime("%H:%M:%S")
+        line = f"[{ts}] {text}"
+        print(line, flush=True)
         if self.on_log:
             try:
-                self.on_log(text)
+                self.on_log(line)
             except Exception:
                 pass
 
@@ -500,11 +504,7 @@ class GameBotCore:
                         continue
 
             # 阶段2：无限循环点击固定坐标，直到抢成功
-            # 2a. 判断是否抢成功：
-            #   - 「等待开始」(小ROI,~400ms) 每轮都查（抢票主标志：进入队伍房间）
-            #   - 「佣兵队列」(大ROI,~1s) 每 SKILL_CHECK_EVERY 轮才查一次
-            #     （房主已开战进入战斗状态，与"进入战斗"判断条件一致）
-            #     满足任一即视为抢到票
+            # 2a. 判断是否抢成功：「等待开始」(每轮查) 或「佣兵列队」(每8轮查)
             wait_start = self.find_text(TEXT["wait_start"], roi=ROI["room_status"])
             if wait_start:
                 self._log(f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「等待开始」@{wait_start}")
@@ -522,7 +522,9 @@ class GameBotCore:
                     if self.on_grab_count_changed:
                         self.on_grab_count_changed(self.grab_count)
                     return True
-            # 2c. 抢票失败判断：检测到「输人邀请码」= 点 ticket 后弹出邀请码框，未真正加入
+                else:
+                    self._log(f"[抢ticket] 轮{round_cnt} 未检测到「佣兵列队」")
+            # 2c. 抢票失败判断：检测到「输人邀请码」= 点 ticket 弹出邀请码框，未真正加入
             #     → 重置定位、重新点聊天图标回到抢票页，继续抢票
             if round_cnt % INVITE_CHECK_EVERY == 0:
                 invite = self.find_text(TEXT["invite_code"], roi=ROI["invite_check"])
@@ -538,21 +540,24 @@ class GameBotCore:
                     self.find_click_im()
                     time.sleep(1.0)
                     continue
-            # 2b. 快速从下往上点击 3 个固定坐标
-            #     最新票从最下方刷新，故按 y 降序(click_targets 已排好)从下往上依次点击。
-            #     临时关闭 pyautogui.PAUSE(默认每次点击后停0.1s)，避免3次点击累计0.3s延迟。
+                else:
+                    self._log(f"[抢ticket] 轮{round_cnt} 未检测到「输人邀请码」（无失败标志）")
+            # 2b. 从下往上依次点击 3 个固定坐标，每次间隔 150ms
+            #     最新票从最下方刷新，click_targets 已按 y 降序(下→上)排好。
+            #     临时关闭 pyautogui.PAUSE(默认0.1s)，用显式 150ms 间隔控制点击节奏。
             old_pause = pyautogui.PAUSE
             pyautogui.PAUSE = 0
             try:
-                for x, y in click_targets:
+                for idx, (x, y) in enumerate(click_targets):
                     pyautogui.click(int(x), int(y))
+                    # 最后一个点完不等待
+                    if idx < len(click_targets) - 1:
+                        time.sleep(0.15)
             finally:
                 pyautogui.PAUSE = old_pause
-            # 低频日志
-            if round_cnt % 10 == 0:
-                self._log(
-                    f"[抢ticket] 轮{round_cnt} 点击{len(click_targets)}个固定坐标 {click_targets}"
-                )
+            self._log(
+                f"[抢ticket] 轮{round_cnt} 从下往上点击{len(click_targets)}个坐标 {click_targets}"
+            )
         # running 被置 False（ESC/停止）退出循环
         self._log(f"[抢ticket] 抢票循环被中断(轮{round_cnt})")
         return False
