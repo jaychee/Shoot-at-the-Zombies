@@ -538,9 +538,16 @@ class GameBotCore:
                     self.find_click_im()
                     time.sleep(1.0)
                     continue
-            # 2b. 点击记录的 3 个固定坐标
-            for x, y in click_targets:
-                pyautogui.click(int(x), int(y))
+            # 2b. 快速从下往上点击 3 个固定坐标
+            #     最新票从最下方刷新，故按 y 降序(click_targets 已排好)从下往上依次点击。
+            #     临时关闭 pyautogui.PAUSE(默认每次点击后停0.1s)，避免3次点击累计0.3s延迟。
+            old_pause = pyautogui.PAUSE
+            pyautogui.PAUSE = 0
+            try:
+                for x, y in click_targets:
+                    pyautogui.click(int(x), int(y))
+            finally:
+                pyautogui.PAUSE = old_pause
             # 低频日志
             if round_cnt % 10 == 0:
                 self._log(
