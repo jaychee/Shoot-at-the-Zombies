@@ -25,7 +25,7 @@ class HuanqiuGUI:
         self.root.title("寰球救援 - 抢票&战斗")
         self.root.geometry("460x560")
         self.root.resizable(False, False)
-        # 置顶方便观察（不抢游戏焦点）
+        # 启动时强制置顶弹到最前，2秒后切回（在 __main__ 入口处理，避免长期遮挡）
         try:
             self.root.attributes("-topmost", True)
         except tk.TclError:
@@ -235,4 +235,13 @@ if __name__ == "__main__":
     app = HuanqiuGUI(root)
     app.setup_f9_hotkey()
     root.protocol("WM_DELETE_WINDOW", app.on_close)
+    # 强制把 GUI 弹到最前（提权启动时窗口常在后台，需主动置顶+抢焦点）
+    try:
+        root.attributes("-topmost", True)
+        root.lift()
+        root.focus_force()
+        # 稍后再切回非强制置顶，避免长期遮挡其他窗口
+        root.after(2000, lambda: root.attributes("-topmost", False))
+    except tk.TclError:
+        pass
     root.mainloop()
