@@ -448,19 +448,21 @@ class GameBotCore:
         """抢寰球救援 ticket（固定坐标无限点击法）。
         流程：
         1. 切到招募频道后（由 huanqiu_mode._open_recruitment_channel 完成），
-           识别页面上的「多人挑战」文字坐标，识别到 3 个即确认已在抢票页，记录这 3 个固定坐标。
-        2. 无限循环点击这 3 个坐标（不做新票/死票判定），直到抢成功返回 True。
-           抢成功的判断：出现「等待开始」(进入队伍房间) 或「佣兵队列」(已进入战斗)，
-           满足任一即视为抢到票（与后续"进入战斗"判断条件一致）。
+           用模板匹配(multi_challenge.png, ~40ms)定位页面上「多人挑战」文字坐标，
+           定位到 3 个即确认已在抢票页，记录这 3 个固定坐标。
+           （改用模板匹配代替 OCR：OCR 定位要 5.6s，模板匹配仅 42ms，快 130 倍且更可靠）
+        2. 无限循环点击这 3 个坐标（不做新票/死票判定、不识别数字），直到抢成功返回 True。
+           抢成功的判断：出现「等待开始」(进入队伍房间) 或「佣兵列队」(已进入战斗)，
+           满足任一即视为抢到票。
         3. deadline 超时返回 False。
 
-        说明：「等待开始」(小ROI,~400ms) 每轮都查；「佣兵队列」(大ROI,~1s) 每8轮查一次。
+        说明：「等待开始」(小ROI,~400ms) 每轮都查；「佣兵列队」(小ROI,~1s) 每8轮查一次。
         点击「多人挑战」文字坐标本身即可触发加入（实测该位置可加入）。
         """
         round_cnt = 0
         click_targets = None  # 记录的 3 个「多人挑战」固定坐标
-        locate_deadline = time.time() + 30  # 最多等 30s 识别到 3 个坐标
-        SKILL_CHECK_EVERY = 8  # 每隔8轮才查一次「已激活技能」(大ROI慢~2.5s)，平衡效率与覆盖
+        locate_deadline = time.time() + 30  # 最多等 30s 定位到 3 个坐标
+        SKILL_CHECK_EVERY = 8  # 每隔8轮才查一次「佣兵列队」(ROI较慢)，平衡效率与覆盖
 
         while self.running:
             if deadline is not None and time.time() > deadline:
@@ -468,10 +470,10 @@ class GameBotCore:
                 return False
             round_cnt += 1
 
-            # 阶段1：识别 3 个「多人挑战」坐标，确认在抢票页
+            # 阶段1：模板匹配定位「多人挑战」坐标，确认在抢票页
             if click_targets is None:
-                positions = self.find_all_text(
-                    TEXT["multi_challenge"], roi=ROI["multi_challenge"]
+                positions = self.find_all_templates(
+                    "multi_challenge.png", threshold=0.8, roi=ROI["multi_challenge"]
                 )
                 if len(positions) >= 3:
                     # 按 y 降序（底部=最新=优先点击）
@@ -482,7 +484,7 @@ class GameBotCore:
                 else:
                     if time.time() > locate_deadline:
                         self._log(
-                            f"[抢ticket] 30s内未识别到3个「多人挑战」(仅{len(positions)}个)，"
+                            f"[抢ticket] 30s内未定位到3个「多人挑战」(仅{len(positions)}个)，"
                             f"按现有坐标继续抢"
                         )
                         click_targets = sorted(
@@ -490,9 +492,9 @@ class GameBotCore:
                         ) if positions else [(280, 395), (280, 550), (280, 700)]
                     else:
                         self._log(
-                            f"[抢ticket] 等待抢票页加载(识别到{len(positions)}个「多人挑战」)..."
+                            f"[抢ticket] 等待抢票页加载(定位到{len(positions)}个「多人挑战」)..."
                         )
-                        time.sleep(1.0)
+                        time.sleep(0.5)
                         continue
 
             # 阶段2：无限循环点击固定坐标，直到抢成功
