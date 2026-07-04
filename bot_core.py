@@ -56,6 +56,7 @@ TEXT = {
     "mercenary_queue": "佣兵列队",  # 房主开始战斗后界面显示（确认已进入战斗）；注意游戏原文是「列队」非「队列」
     "congrats": "恭喜获得",  # 战斗结算界面标志（出现=战斗结束，可点返回领取奖励）
     "multi_challenge": "多人挑战",  # 招募频道 ticket 卡片文字（抢票页确认标志 + 点击目标）
+    "invite_code": "输人邀请码",  # 点 ticket 后若弹「输入邀请码」框=未真正加入(抢票失败)；OCR 常把「输入」误识为「输人」，按此匹配
 }
 
 
@@ -463,6 +464,7 @@ class GameBotCore:
         click_targets = None  # 记录的 3 个「多人挑战」固定坐标
         locate_deadline = time.time() + 30  # 最多等 30s 定位到 3 个坐标
         SKILL_CHECK_EVERY = 8  # 每隔8轮才查一次「佣兵列队」(ROI较慢)，平衡效率与覆盖
+        INVITE_CHECK_EVERY = 4  # 每隔4轮查一次「输人邀请码」(抢票失败标志，需OCR稍慢)
 
         while self.running:
             if deadline is not None and time.time() > deadline:
@@ -514,12 +516,28 @@ class GameBotCore:
                 mercenary = self.find_text(TEXT["mercenary_queue"], roi=ROI["battle_check"])
                 if mercenary:
                     self._log(
-                        f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「佣兵队列」@{mercenary}（已进入战斗）"
+                        f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「佣兵列队」@{mercenary}（已进入战斗）"
                     )
                     self.grab_count += 1
                     if self.on_grab_count_changed:
                         self.on_grab_count_changed(self.grab_count)
                     return True
+            # 2c. 抢票失败判断：检测到「输人邀请码」= 点 ticket 后弹出邀请码框，未真正加入
+            #     → 重置定位、重新点聊天图标回到抢票页，继续抢票
+            if round_cnt % INVITE_CHECK_EVERY == 0:
+                invite = self.find_text(TEXT["invite_code"], roi=ROI["invite_check"])
+                if invite:
+                    self._log(
+                        f"[抢ticket] 轮{round_cnt} ✗ 抢票失败！检测到「输人邀请码」@{invite}"
+                        f"（点ticket弹出了邀请码框，未加入队伍）"
+                    )
+                    self._log("[抢ticket] 重新点聊天图标，回到抢票页继续抢...")
+                    # 重置定位，强制下轮重新模板匹配定位「多人挑战」
+                    click_targets = None
+                    # 重新点聊天图标打开聊天框（find_click_im 内部含模板+固定坐标兜底）
+                    self.find_click_im()
+                    time.sleep(1.0)
+                    continue
             # 2b. 点击记录的 3 个固定坐标
             for x, y in click_targets:
                 pyautogui.click(int(x), int(y))
