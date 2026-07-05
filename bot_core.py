@@ -586,8 +586,20 @@ class GameBotCore:
         return self.find_text(TEXT["disconnect"], roi=ROI["disconnect_check"])
 
     def click_confirm(self):
-        """点击掉线弹窗的「确认」按钮。返回是否点击成功。"""
-        return self.click_text(TEXT["confirm"], roi=ROI["confirm_button"])
+        """循环点击页面上的「确定」按钮，直到没有确定按钮为止。
+        用于处理掉线等连续弹窗（点完掉线确定可能又弹「战斗已经结束」确定）。
+        每次点击后等待弹窗切换，再重新识别新的确定按钮。
+        返回点击次数（0=没点到任何确定按钮）。
+        """
+        clicked = 0
+        for _ in range(5):  # 最多连点 5 次，防止无限循环
+            pos = self.find_text(TEXT["confirm"], roi=ROI["confirm_button"])
+            if not pos:
+                break
+            self.click(*pos)
+            clicked += 1
+            time.sleep(1.5)  # 等待弹窗切换/消失
+        return clicked
 
     def click_return_button(self):
         """点击结算页的「返回」按钮回到寰球救援主页。"""

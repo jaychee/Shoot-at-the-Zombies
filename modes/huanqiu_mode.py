@@ -158,10 +158,11 @@ class HuanqiuMode:
             # 2. 掉线检测：查「掉线了」
             disconnect_pos = bot.check_disconnect()
             if disconnect_pos:
-                self._log(f"[环球] ⚠ 第{i+1}次检测到「掉线了」@{disconnect_pos}，点击确认")
-                bot.click_confirm()
-                time.sleep(2.0)
-                # 点完确认后查「佣兵列队」判断是否还在战斗中
+                self._log(f"[环球] ⚠ 第{i+1}次检测到「掉线了」@{disconnect_pos}，连续点击确定按钮")
+                # click_confirm 会循环点击所有「确定」按钮（处理连续弹窗，如掉线后弹战斗结束）
+                clicked = bot.click_confirm()
+                self._log(f"[环球]   共点击 {clicked} 个确定按钮")
+                # 点完所有确定后查「佣兵列队」判断是否还在战斗中
                 in_battle = bot.check_mercenary_queue()
                 if in_battle:
                     self._log(f"[环球] ✓ 掉线恢复后检测到「佣兵列队」@{in_battle}，仍在战斗中，继续等待结算")
