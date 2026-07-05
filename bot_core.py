@@ -57,6 +57,8 @@ TEXT = {
     "congrats": "恭喜获得",  # 战斗结算界面标志（出现=战斗结束，可点返回领取奖励）
     "multi_challenge": "多人挑战",  # 招募频道 ticket 卡片文字（抢票页确认标志 + 点击目标）
     "invite_code": "输人邀请码",  # 点 ticket 后若弹「输入邀请码」框=未真正加入(抢票失败)；OCR 常把「输入」误识为「输人」，按此匹配
+    "disconnect": "掉线了",       # 战斗中掉线弹窗标志（出现=需点确认重连或回主流程）
+    "confirm": "确认",            # 掉线弹窗的「确认」按钮
 }
 
 
@@ -578,6 +580,14 @@ class GameBotCore:
     def check_congrats(self):
         """检查页面是否有「恭喜获得」（战斗结算标志）。"""
         return self.find_text(TEXT["congrats"], roi=ROI["settle_check"])
+
+    def check_disconnect(self):
+        """检查页面是否有「掉线了」弹窗（战斗中掉线标志）。"""
+        return self.find_text(TEXT["disconnect"], roi=ROI["disconnect_check"])
+
+    def click_confirm(self):
+        """点击掉线弹窗的「确认」按钮。返回是否点击成功。"""
+        return self.click_text(TEXT["confirm"], roi=ROI["confirm_button"])
 
     def click_return_button(self):
         """点击结算页的「返回」按钮回到寰球救援主页。"""

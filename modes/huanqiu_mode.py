@@ -120,12 +120,16 @@ class HuanqiuMode:
 
     def _wait_settle_phase(self):
         """等待结算阶段：每30s查「恭喜获得」，出现则点「返回」回寰球主页，返回 True。
+        每轮同时做掉线检测：检测到「掉线了」→点「确认」→查「佣兵列队」判断是否还在战斗：
+          - 还在战斗(有佣兵列队) → 继续结算等待循环
+          - 不在战斗(无佣兵列队) → 返回 False，由外层回主流程重新抢票
         超过 SETTLE_MAX_ROUNDS 轮仍未结算则返回 False（兜底）。
         """
         bot = self.bot
         for i in range(self.SETTLE_MAX_ROUNDS):
             if not bot.running:
                 return False
+            # 1. 查结算「恭喜获得」
             pos = bot.check_congrats()
             if pos:
                 self._log(f"[环球] ✓ 第{i+1}次检测到「恭喜获得」@{pos}，战斗结束，点返回")
@@ -151,9 +155,24 @@ class HuanqiuMode:
                     time.sleep(1.0)
                 self._log("[环球] 已返回寰球救援主页，准备下一轮抢票")
                 return True
+            # 2. 掉线检测：查「掉线了」
+            disconnect_pos = bot.check_disconnect()
+            if disconnect_pos:
+                self._log(f"[环球] ⚠ 第{i+1}次检测到「掉线了」@{disconnect_pos}，点击确认")
+                bot.click_confirm()
+                time.sleep(2.0)
+                # 点完确认后查「佣兵列队」判断是否还在战斗中
+                in_battle = bot.check_mercenary_queue()
+                if in_battle:
+                    self._log(f"[环球] ✓ 掉线恢复后检测到「佣兵列队」@{in_battle}，仍在战斗中，继续等待结算")
+                    # 继续结算等待循环（不 sleep，立即进入下一轮检查）
+                    continue
+                else:
+                    self._log("[环球] ✗ 掉线恢复后未检测到「佣兵列队」，已不在战斗中，回主流程重新抢票")
+                    return False
             remain = self.SETTLE_MAX_ROUNDS - i - 1
             self._log(
-                f"[环球] 第{i+1}次等待结算未发现「恭喜获得」"
+                f"[环球] 第{i+1}次等待结算未发现「恭喜获得」/「掉线了」"
                 f"{'，'+str(self.CHECK_INTERVAL)+'s后再查' if remain else ''}"
             )
             bot.sleep_interruptible(self.CHECK_INTERVAL, tag=f"等待结算({i+1})")
