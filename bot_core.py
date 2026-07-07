@@ -544,6 +544,20 @@ class GameBotCore:
                     continue
                 else:
                     self._log(f"[抢ticket] 轮{round_cnt} 未检测到「输人邀请码」（无失败标志）")
+            # 2d. 确认仍在抢票页：用模板匹配查「多人挑战」，若一个都匹配不到说明页面已离开
+            #     抢票页（被其他弹窗/界面打断），需退出抢票重新点聊天图标进入
+            still_in_page = self.find_all_templates(
+                "multi_challenge.png", threshold=0.8, roi=ROI["multi_challenge"]
+            )
+            if not still_in_page:
+                self._log(
+                    f"[抢ticket] 轮{round_cnt} ⚠ 未在抢票页（未识别到「多人挑战」），"
+                    f"退出抢票，重新点聊天图标进入抢票页"
+                )
+                click_targets = None
+                self.find_click_im()
+                time.sleep(1.0)
+                continue
             # 2b. 从下往上依次点击 3 个固定坐标，每次间隔 150ms
             #     最新票从最下方刷新，click_targets 已按 y 降序(下→上)排好。
             #     临时关闭 pyautogui.PAUSE(默认0.1s)，用显式 150ms 间隔控制点击节奏。
