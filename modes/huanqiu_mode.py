@@ -38,7 +38,12 @@ class HuanqiuMode:
                 self._log("[环球] ===== 步骤1/4：开始抢票 =====")
                 grabbed = self._grab_phase()
                 if not grabbed:
-                    # 抢票阶段被中断或超时
+                    # 抢票失败：招募频道没打开 / 抢票超时。
+                    # 若脚本仍在运行，则 continue 进入下一轮重试（而非退出整个流程）；
+                    # 若已被停止(ESC)，则 break 退出。
+                    if bot.running:
+                        self._log("[环球] 抢票未成功，稍后重新开始下一轮")
+                        continue
                     break
                 # —— 步骤2：校验是否真正进入战斗（查「佣兵队列」3次/30s）——
                 self._log("[环球] ===== 步骤2/4：校验是否进入战斗 =====")
@@ -79,10 +84,16 @@ class HuanqiuMode:
 
     # —— 各阶段实现 ——
     def _grab_phase(self):
-        """抢票阶段：进入招募频道并抢，检测到「等待开始」或「已激活技能」返回 True。"""
+        """抢票阶段：进入招募频道并抢，检测到「等待开始」或「佣兵列队」返回 True。
+        若无法打开招募频道（识别不到「招募」标签），返回 False 让外层重新开始。
+        """
         bot = self.bot
         self._log("[环球] 打开招募频道...")
-        self._open_recruitment_channel()
+        opened = self._open_recruitment_channel()
+        if not opened:
+            self._log("[环球] ✗ 未进入招募频道，跳过本轮抢票，稍后重试")
+            bot.sleep_interruptible(5, tag="招募频道未打开等待重试")
+            return False
         deadline = time.time() + self.GRAB_DEADLINE
         return bot.find_click_huanqiu_ticket(deadline=deadline)
 
@@ -200,6 +211,7 @@ class HuanqiuMode:
         """打开聊天框并切换到招募频道。
         每步操作后等待界面切换，并用文字确认进入下一界面，避免导航失败。
         每步都打日志，便于在 GUI 上看到当前导航进度。
+        返回 True=招募频道已打开（检测到「招募」标签），False=未打开。
         """
         bot = self.bot
         # 1. 点击战斗按钮（确保在大厅可见底部菜单）
@@ -214,8 +226,13 @@ class HuanqiuMode:
             bot.find_click_start_button()
             time.sleep(0.8)
             opened = self._click_chat_icon_until_open()
+        if not opened:
+            # 两次都没打开聊天框，不再继续点招募标签（点了也无效）
+            self._log("[环球] ✗ 聊天框两次均未打开，放弃本轮抢票，等待重试")
+            return False
         # 3. 点击招募频道标签，等待切换
         self._log("[环球] 导航3/3: 点击「招募」频道标签")
         bot.find_click_recruitment()
         time.sleep(1.0)
-        self._log("[环球] 已尝试切换到招募频道" + ("（聊天框已打开）" if opened else "（⚠聊天框可能未打开，招募点击可能无效）"))
+        self._log("[环球] 已切换到招募频道")
+        return True
