@@ -164,13 +164,15 @@ class HuanqiuMode:
                 )
                 time.sleep(1.5)  # 等待技能选择动画
                 continue
-            # 查「精英掉落」
+            # 查「精英掉落」→ 点(260,820)两次，间隔1.5s
             elite_pos = bot.find_text("精英掉落", roi=ROI["center_dialog"])
             if elite_pos:
                 ex = bot.game_window[0] + self.ELITE_DROP_POS[0]
                 ey = bot.game_window[1] + self.ELITE_DROP_POS[1]
                 pyautogui.click(int(ex), int(ey))
-                self._log(f"[环球] 检测到「精英掉落」@{elite_pos}，点击坐标 {self.ELITE_DROP_POS}")
+                time.sleep(1.5)
+                pyautogui.click(int(ex), int(ey))
+                self._log(f"[环球] 检测到「精英掉落」@{elite_pos}，点击坐标 {self.ELITE_DROP_POS}×2")
                 time.sleep(1.5)
                 continue
             # 查「恭喜获得」(战斗结算标志) → 战斗结束，退出循环交给步骤4
