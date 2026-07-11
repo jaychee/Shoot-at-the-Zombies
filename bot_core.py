@@ -491,7 +491,35 @@ class GameBotCore:
                         f"[抢ticket] ✓ 已在抢票页，记录3个「多人挑战」坐标: {click_targets}"
                     )
                 else:
-                    # 未定位到≥3个多人挑战，查是否在招募页，在则点招募标签刷新后重新识别
+                    # 未定位到≥3个多人挑战，先尝试识别是否已抢票成功或失败
+                    # （可能点 ticket 后直接进入了队伍房间/弹了邀请码，已离开抢票页）
+                    wait_start = self.find_text(TEXT["wait_start"], roi=ROI["room_status"])
+                    if wait_start:
+                        self._log(f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「等待开始」@{wait_start}")
+                        self.grab_count += 1
+                        if self.on_grab_count_changed:
+                            self.on_grab_count_changed(self.grab_count)
+                        return True
+                    mercenary = self.find_text(TEXT["mercenary_queue"], roi=ROI["battle_check"])
+                    if mercenary:
+                        self._log(
+                            f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「佣兵列队」@{mercenary}（已进入战斗）"
+                        )
+                        self.grab_count += 1
+                        if self.on_grab_count_changed:
+                            self.on_grab_count_changed(self.grab_count)
+                        return True
+                    invite = self.find_text(TEXT["invite_code"], roi=ROI["invite_check"])
+                    if invite:
+                        self._log(
+                            f"[抢ticket] 轮{round_cnt} ✗ 抢票失败！检测到「输人邀请码」@{invite}"
+                            f"（点ticket弹出了邀请码框，未加入队伍）"
+                        )
+                        self._log("[抢ticket] 重新点聊天图标，回到抢票页继续抢...")
+                        self.find_click_im()
+                        time.sleep(1.0)
+                        continue
+                    # 既没成功也没失败，回到原流程：查是否在招募页
                     in_recruitment = self.find_text(
                         TEXT["recruitment"], roi=ROI["chat_channels"]
                     )
