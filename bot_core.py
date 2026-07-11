@@ -457,20 +457,21 @@ class GameBotCore:
         1. 定位阶段：模板匹配识别「多人挑战」坐标，识别到≥3个即确认在抢票页，
            记录这3个坐标（按y降序: 下→上），后续点击复用，不每轮重复识别。
         2. 每轮循环：
-           a. 成功判断：「等待开始」(每轮) 或「佣兵列队」(每8轮) → return True
+           a. 成功判断：「等待开始」(每10轮) 或「佣兵列队」(每8轮) → return True
            b. 每8轮查佣兵列队时，同时重新识别「多人挑战」确认是否还在抢票页：
               - 还在 → 继续抢（刷新点击坐标）
               - 不在 → 查是否在招募页(有「招募」标签)：
                 · 在招募页 → 等多人挑战出现，继续
                 · 不在 → 点聊天图标重新进入抢票页
-           c. 失败判断：「输人邀请码」(每4轮) → 点聊天图标重进
+           c. 失败判断：「输人邀请码」(每15轮) → 点聊天图标重进
            d. 从下往上点击多人挑战坐标，间隔150ms
         """
         round_cnt = 0
         click_targets = None  # 记录的「多人挑战」坐标（定位一次复用，每8轮刷新）
         locate_deadline = time.time() + 30  # 最多等 30s 定位到 3 个坐标
+        WAIT_START_CHECK_EVERY = 10  # 每隔10轮查「等待开始」(抢票成功标志)
         SKILL_CHECK_EVERY = 8  # 每隔8轮查「佣兵列队」+ 刷新「多人挑战」坐标
-        INVITE_CHECK_EVERY = 4  # 每隔4轮查「输人邀请码」(抢票失败标志)
+        INVITE_CHECK_EVERY = 15  # 每隔15轮查「输人邀请码」(抢票失败标志)
 
         while self.running:
             if deadline is not None and time.time() > deadline:
@@ -504,14 +505,15 @@ class GameBotCore:
                         time.sleep(0.5)
                         continue
 
-            # 成功判断：「等待开始」(每轮查)
-            wait_start = self.find_text(TEXT["wait_start"], roi=ROI["room_status"])
-            if wait_start:
-                self._log(f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「等待开始」@{wait_start}")
-                self.grab_count += 1
-                if self.on_grab_count_changed:
-                    self.on_grab_count_changed(self.grab_count)
-                return True
+            # 成功判断：「等待开始」(每10轮查)
+            if round_cnt % WAIT_START_CHECK_EVERY == 0:
+                wait_start = self.find_text(TEXT["wait_start"], roi=ROI["room_status"])
+                if wait_start:
+                    self._log(f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「等待开始」@{wait_start}")
+                    self.grab_count += 1
+                    if self.on_grab_count_changed:
+                        self.on_grab_count_changed(self.grab_count)
+                    return True
 
             # 每8轮：查「佣兵列队」(成功) + 重新识别「多人挑战」(确认还在抢票页)
             if round_cnt % SKILL_CHECK_EVERY == 0:
