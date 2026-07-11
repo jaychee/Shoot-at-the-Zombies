@@ -7,7 +7,7 @@ cd /d "%~dp0"
 net file >nul 2>&1
 if %errorlevel% neq 0 (
     echo Requesting admin privileges... Please click Yes on the UAC prompt.
-    powershell -NoProfile -Command "Start-Process -FilePath '%~dp0.venv27\Scripts\python.exe' -ArgumentList 'gui.py' -WorkingDirectory '%~dp0' -Verb RunAs"
+    powershell -NoProfile -Command "Start-Process -FilePath '%~dp0.venv27\Scripts\python.exe' -ArgumentList 'gui.py' -WorkingDirectory '%~dp0' -Verb RunAs -WindowStyle Minimized"
     exit /b
 )
 
@@ -19,7 +19,7 @@ if not exist ".venv27\Scripts\python.exe" (
 
 echo Starting Huanqiu GUI...
 echo.
-".venv27\Scripts\python.exe" gui.py
+start "" /min ".venv27\Scripts\python.exe" gui.py
 
 echo.
 echo GUI exited.

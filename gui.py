@@ -60,6 +60,14 @@ class HuanqiuGUI:
             foreground="#0066cc",
         ).grid(row=0, column=1, padx=18)
 
+        # 运行计时
+        self.timer_var = tk.StringVar(value="运行时间: 00:00:00")
+        ttk.Label(
+            self.root, textvariable=self.timer_var, font=("Consolas", 11, "bold"),
+            foreground="#666666",
+        ).pack(pady=(2, 4))
+        self._start_time = None  # 脚本开始运行的时间戳
+
         # 按钮区
         btn_frame = ttk.Frame(self.root)
         btn_frame.pack(pady=4)
@@ -157,6 +165,11 @@ class HuanqiuGUI:
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
 
+        # 开始计时
+        import time as _time
+        self._start_time = _time.time()
+        self._refresh_timer()
+
         # 后台线程跑主循环（mode_handler.run 内含 抢票→战斗→结算→重抢 循环）
         self.bot_thread = threading.Thread(target=self._run_bot, daemon=True)
         self.bot_thread.start()
@@ -180,11 +193,24 @@ class HuanqiuGUI:
 
     def _on_stopped(self):
         self.bot = None
+        self._start_time = None  # 停止计时
         self.status_var.set("已停止")
         self.status_lbl.config(foreground="gray")
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self._append_log("===== 脚本已停止 =====")
+
+    # —— 运行计时（每秒刷新，停止后不再刷新）——
+    def _refresh_timer(self):
+        import time as _time
+        if self._start_time is None:
+            return  # 已停止，不再刷新
+        elapsed = int(_time.time() - self._start_time)
+        h = elapsed // 3600
+        m = (elapsed % 3600) // 60
+        s = elapsed % 60
+        self.timer_var.set(f"运行时间: {h:02d}:{m:02d}:{s:02d}")
+        self.root.after(1000, self._refresh_timer)
 
     # —— 战绩回调（在工作线程触发，通过 after 切回主线程）——
     def _on_grab_changed(self, count):
