@@ -490,7 +490,19 @@ class GameBotCore:
                         f"[抢ticket] ✓ 已在抢票页，记录3个「多人挑战」坐标: {click_targets}"
                     )
                 else:
-                    if time.time() > locate_deadline:
+                    # 未定位到≥3个多人挑战，查是否在招募页，在则点招募标签刷新后重新识别
+                    in_recruitment = self.find_text(
+                        TEXT["recruitment"], roi=ROI["chat_channels"]
+                    )
+                    if in_recruitment:
+                        self._log(
+                            f"[抢ticket] 在招募页但未定位到「多人挑战」(仅{len(positions)}个)，"
+                            f"点「招募」标签刷新频道后重新识别"
+                        )
+                        self.click(*in_recruitment)
+                        time.sleep(1.0)
+                        continue  # 下一轮重新识别
+                    elif time.time() > locate_deadline:
                         self._log(
                             f"[抢ticket] 30s内未定位到3个「多人挑战」(仅{len(positions)}个)，"
                             f"按现有坐标继续抢"
@@ -541,9 +553,22 @@ class GameBotCore:
                         TEXT["recruitment"], roi=ROI["chat_channels"]
                     )
                     if in_recruitment:
-                        self._log(f"[抢ticket] 轮{round_cnt} 在招募页但暂无「多人挑战」，等待继续")
-                        click_targets = None
-                        time.sleep(0.5)
+                        # 在招募页但无多人挑战（票被抢光/频道未刷新），点招募标签刷新频道再重新识别
+                        self._log(
+                            f"[抢ticket] 轮{round_cnt} 在招募页但暂无「多人挑战」，"
+                            f"点「招募」标签刷新频道后重新识别"
+                        )
+                        self.click(*in_recruitment)
+                        time.sleep(1.0)
+                        mc_recheck = self.find_all_templates(
+                            "multi_challenge.png", threshold=0.8, roi=ROI["multi_challenge"]
+                        )
+                        if mc_recheck:
+                            click_targets = sorted(mc_recheck, key=lambda p: p[1], reverse=True)[:3]
+                            self._log(f"[抢ticket] 轮{round_cnt} 刷新后识别到「多人挑战」，坐标: {click_targets}")
+                        else:
+                            self._log(f"[抢ticket] 轮{round_cnt} 刷新后仍无「多人挑战」，继续等待")
+                            click_targets = None
                         continue
                     else:
                         self._log(
