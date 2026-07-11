@@ -93,6 +93,7 @@ class GameBotCore:
         self.last_battle_count_time = 0
         self.grab_count = 0  # 抢到票次数（每次成功加入队伍+1）
         self.on_grab_count_changed = None  # 抢票次数变化回调（GUI刷新用）
+        self.skill_select_count = 0  # 当场战斗中技能选择出现的次数（每次进战斗重置）
         self.on_log = None  # 日志回调（GUI实时显示当前步骤用），签名 on_log(text)
 
         # 主流程公共模块开关：True=跳过 main_loop 中的公共操作与战斗循环，

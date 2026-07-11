@@ -116,18 +116,75 @@ class HuanqiuMode:
                 bot.sleep_interruptible(self.CHECK_INTERVAL, tag=f"校验间隔({i+1})")
         return False
 
+    # 战斗中技能选择的3个固定坐标（技能卡片位置）
+    BATTLE_SKILL_POS = [(90, 546), (270, 546), (460, 546)]
+    # 精英掉落坐标
+    ELITE_DROP_POS = (260, 820)
+
     def _wait_battle_phase(self):
-        """等待战斗结束阶段：固定等待8分钟（可被 ESC 中断）。"""
+        """战斗阶段：不再固定等待8分钟，改为主动参与战斗。
+        流程：
+        1. 进入战斗页后随机点击3个技能坐标之一
+        2. 循环识别页面：
+           - 出现「选择技能」/「技能选择」→ 点3个技能坐标之一，技能选择计数+1
+           - 出现「精英掉落」→ 点精英掉落坐标(260,820)
+        本场战斗技能选择次数保存在 bot.skill_select_count（每次进入战斗重置为0）。
+        循环直到 _wait_settle_phase 阶段接管（由外层 run() 调用顺序保证）。
+        """
+        import random
         bot = self.bot
-        self._log(f"[环球] 等待战斗结束 {self.BATTLE_WAIT}s（每分钟打印进度）")
-        total = self.BATTLE_WAIT
-        elapsed = 0
-        step = 60
-        while bot.running and elapsed < total:
-            bot.sleep_interruptible(min(step, total - elapsed))
-            elapsed += step
-            if bot.running and elapsed < total:
-                self._log(f"[环球] 战斗等待进度 {elapsed}/{total}s")
+        # 重置本场技能选择计数
+        bot.skill_select_count = 0
+        self._log("[环球] ===== 进入战斗，开始主动打怪 =====")
+        # 进入战斗先随机点一个技能坐标
+        pos = random.choice(self.BATTLE_SKILL_POS)
+        sx = bot.game_window[0] + pos[0]
+        sy = bot.game_window[1] + pos[1]
+        import pyautogui
+        pyautogui.click(int(sx), int(sy))
+        self._log(f"[环球] 进战斗点击技能坐标 {pos}")
+
+        # 循环识别技能选择/精英掉落
+        check_round = 0
+        while bot.running:
+            check_round += 1
+            # 查「选择技能」/「技能选择」(战斗中升级选技能弹窗)
+            skill_pos = bot.find_text("选择技能", roi=ROI["center_dialog"]) or \
+                        bot.find_text("技能选择", roi=ROI["center_dialog"])
+            if skill_pos:
+                # 出现技能选择，点3个坐标之一
+                pick = random.choice(self.BATTLE_SKILL_POS)
+                sx = bot.game_window[0] + pick[0]
+                sy = bot.game_window[1] + pick[1]
+                pyautogui.click(int(sx), int(sy))
+                bot.skill_select_count += 1
+                self._log(
+                    f"[环球] 检测到「选择技能」(第{bot.skill_select_count}次)，"
+                    f"点击技能坐标 {pick}"
+                )
+                time.sleep(1.5)  # 等待技能选择动画
+                continue
+            # 查「精英掉落」
+            elite_pos = bot.find_text("精英掉落", roi=ROI["center_dialog"])
+            if elite_pos:
+                ex = bot.game_window[0] + self.ELITE_DROP_POS[0]
+                ey = bot.game_window[1] + self.ELITE_DROP_POS[1]
+                pyautogui.click(int(ex), int(ey))
+                self._log(f"[环球] 检测到「精英掉落」@{elite_pos}，点击坐标 {self.ELITE_DROP_POS}")
+                time.sleep(1.5)
+                continue
+            # 查「恭喜获得」(战斗结算标志) → 战斗结束，退出循环交给步骤4
+            congrats = bot.check_congrats()
+            if congrats:
+                self._log(
+                    f"[环球] 检测到「恭喜获得」@{congrats}，战斗结束！"
+                    f"（本场技能选择{bot.skill_select_count}次）"
+                )
+                break
+            # 没检测到技能选择/精英掉落/结算，短暂等待后继续
+            time.sleep(2.0)
+            if check_round % 15 == 0:
+                self._log(f"[环球] 战斗进行中(第{check_round}轮检测)，技能选择累计{bot.skill_select_count}次")
 
     def _wait_settle_phase(self):
         """等待结算阶段：每30s查「恭喜获得」，出现则点「返回」回寰球主页，返回 True。
