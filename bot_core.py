@@ -452,25 +452,22 @@ class GameBotCore:
             self.click(102, 304)
 
     def find_click_huanqiu_ticket(self, deadline=None):
-        """抢寰球救援 ticket（固定坐标无限点击法）。
-        流程：
-        1. 切到招募频道后（由 huanqiu_mode._open_recruitment_channel 完成），
-           用模板匹配(multi_challenge.png, ~40ms)定位页面上「多人挑战」文字坐标，
-           定位到 3 个即确认已在抢票页，记录这 3 个固定坐标。
-           （改用模板匹配代替 OCR：OCR 定位要 5.6s，模板匹配仅 42ms，快 130 倍且更可靠）
-        2. 无限循环点击这 3 个坐标（不做新票/死票判定、不识别数字），直到抢成功返回 True。
-           抢成功的判断：出现「等待开始」(进入队伍房间) 或「佣兵列队」(已进入战斗)，
-           满足任一即视为抢到票。
-        3. deadline 超时返回 False。
-
-        说明：「等待开始」(小ROI,~400ms) 每轮都查；「佣兵列队」(小ROI,~1s) 每8轮查一次。
-        点击「多人挑战」文字坐标本身即可触发加入（实测该位置可加入）。
+        """抢寰球救援 ticket。
+        每轮循环：
+        1. 重新识别「多人挑战」坐标（页面滚动坐标会变，每轮重新定位）：
+           - 定位到≥1个 → 记录为本轮点击目标(按y降序: 下→上)
+           - 一个都没有 → 查是否在招募页(有「招募」标签)：
+             · 在招募页 → 页面暂无多人挑战，等0.5s继续（不点聊天图标）
+             · 不在招募页 → 被带离抢票页，点聊天图标重新进入
+        2. 成功判断：「等待开始」(每轮) 或「佣兵列队」(每8轮) → return True
+        3. 失败判断：「输人邀请码」(每4轮) → 点聊天图标重进
+        4. 从下往上点击多人挑战坐标，间隔150ms
         """
         round_cnt = 0
-        click_targets = None  # 记录的 3 个「多人挑战」固定坐标
-        locate_deadline = time.time() + 30  # 最多等 30s 定位到 3 个坐标
-        SKILL_CHECK_EVERY = 8  # 每隔8轮才查一次「佣兵列队」(ROI较慢)，平衡效率与覆盖
-        INVITE_CHECK_EVERY = 4  # 每隔4轮查一次「输人邀请码」(抢票失败标志，需OCR稍慢)
+        click_targets = None  # 本轮识别到的「多人挑战」坐标(每轮重新识别)
+        SKILL_CHECK_EVERY = 8  # 每隔8轮才查一次「佣兵列队」(ROI较慢)
+        INVITE_CHECK_EVERY = 4  # 每隔4轮查一次「输人邀请码」(抢票失败标志)
+        no_mc_rounds = 0  # 连续未识别到多人挑战的轮数(用于判断是否真的离开了招募页)
 
         while self.running:
             if deadline is not None and time.time() > deadline:
@@ -478,35 +475,41 @@ class GameBotCore:
                 return False
             round_cnt += 1
 
-            # 阶段1：模板匹配定位「多人挑战」坐标，确认在抢票页
-            if click_targets is None:
-                positions = self.find_all_templates(
-                    "multi_challenge.png", threshold=0.8, roi=ROI["multi_challenge"]
+            # 1. 每轮重新识别「多人挑战」坐标（页面滚动坐标会变）
+            positions = self.find_all_templates(
+                "multi_challenge.png", threshold=0.8, roi=ROI["multi_challenge"]
+            )
+            if positions:
+                # 识别到多人挑战，按 y 降序（下→上）取前3个作为点击目标
+                click_targets = sorted(positions, key=lambda p: p[1], reverse=True)[:3]
+                no_mc_rounds = 0
+            else:
+                # 未识别到多人挑战，查是否还在招募页（有「招募」标签）
+                no_mc_rounds += 1
+                in_recruitment = self.find_text(
+                    TEXT["recruitment"], roi=ROI["chat_channels"]
                 )
-                if len(positions) >= 3:
-                    # 按 y 降序（底部=最新=优先点击）
-                    click_targets = sorted(positions, key=lambda p: p[1], reverse=True)[:3]
+                if in_recruitment:
+                    # 还在招募页，只是暂时没有多人挑战（票被抢光了），等待继续
                     self._log(
-                        f"[抢ticket] ✓ 已在抢票页，记录3个「多人挑战」坐标: {click_targets}"
+                        f"[抢ticket] 轮{round_cnt} 在招募页但暂无「多人挑战」"
+                        f"(连续{no_mc_rounds}轮)，等0.5s..."
                     )
+                    time.sleep(0.5)
+                    click_targets = None
+                    continue
                 else:
-                    if time.time() > locate_deadline:
-                        self._log(
-                            f"[抢ticket] 30s内未定位到3个「多人挑战」(仅{len(positions)}个)，"
-                            f"按现有坐标继续抢"
-                        )
-                        click_targets = sorted(
-                            positions, key=lambda p: p[1], reverse=True
-                        ) if positions else [(280, 395), (280, 550), (280, 700)]
-                    else:
-                        self._log(
-                            f"[抢ticket] 等待抢票页加载(定位到{len(positions)}个「多人挑战」)..."
-                        )
-                        time.sleep(0.5)
-                        continue
+                    # 不在招募页，被带离了抢票页，重新点聊天图标进入
+                    self._log(
+                        f"[抢ticket] 轮{round_cnt} ⚠ 不在招募页（无「多人挑战」也无「招募」），"
+                        f"点聊天图标重新进入抢票页"
+                    )
+                    self.find_click_im()
+                    time.sleep(1.0)
+                    click_targets = None
+                    continue
 
-            # 阶段2：无限循环点击固定坐标，直到抢成功
-            # 2a. 判断是否抢成功：「等待开始」(每轮查) 或「佣兵列队」(每8轮查)
+            # 2. 成功判断：「等待开始」(每轮) 或「佣兵列队」(每8轮)
             wait_start = self.find_text(TEXT["wait_start"], roi=ROI["room_status"])
             if wait_start:
                 self._log(f"[抢ticket] 轮{round_cnt} ✓ 抢到！检测到「等待开始」@{wait_start}")
@@ -526,8 +529,8 @@ class GameBotCore:
                     return True
                 else:
                     self._log(f"[抢ticket] 轮{round_cnt} 未检测到「佣兵列队」")
-            # 2c. 抢票失败判断：检测到「输人邀请码」= 点 ticket 弹出邀请码框，未真正加入
-            #     → 重置定位、重新点聊天图标回到抢票页，继续抢票
+
+            # 3. 失败判断：「输人邀请码」(每4轮) → 点聊天图标重进
             if round_cnt % INVITE_CHECK_EVERY == 0:
                 invite = self.find_text(TEXT["invite_code"], roi=ROI["invite_check"])
                 if invite:
@@ -536,44 +539,26 @@ class GameBotCore:
                         f"（点ticket弹出了邀请码框，未加入队伍）"
                     )
                     self._log("[抢ticket] 重新点聊天图标，回到抢票页继续抢...")
-                    # 重置定位，强制下轮重新模板匹配定位「多人挑战」
-                    click_targets = None
-                    # 重新点聊天图标打开聊天框（find_click_im 内部含模板+固定坐标兜底）
                     self.find_click_im()
                     time.sleep(1.0)
                     continue
                 else:
                     self._log(f"[抢ticket] 轮{round_cnt} 未检测到「输人邀请码」（无失败标志）")
-            # 2d. 确认仍在抢票页：用模板匹配查「多人挑战」，若一个都匹配不到说明页面已离开
-            #     抢票页（被其他弹窗/界面打断），需退出抢票重新点聊天图标进入
-            still_in_page = self.find_all_templates(
-                "multi_challenge.png", threshold=0.8, roi=ROI["multi_challenge"]
-            )
-            if not still_in_page:
+
+            # 4. 从下往上依次点击多人挑战坐标，间隔150ms
+            if click_targets:
+                old_pause = pyautogui.PAUSE
+                pyautogui.PAUSE = 0
+                try:
+                    for idx, (x, y) in enumerate(click_targets):
+                        pyautogui.click(int(x), int(y))
+                        if idx < len(click_targets) - 1:
+                            time.sleep(0.15)
+                finally:
+                    pyautogui.PAUSE = old_pause
                 self._log(
-                    f"[抢ticket] 轮{round_cnt} ⚠ 未在抢票页（未识别到「多人挑战」），"
-                    f"退出抢票，重新点聊天图标进入抢票页"
+                    f"[抢ticket] 轮{round_cnt} 从下往上点击{len(click_targets)}个坐标 {click_targets}"
                 )
-                click_targets = None
-                self.find_click_im()
-                time.sleep(1.0)
-                continue
-            # 2b. 从下往上依次点击 3 个固定坐标，每次间隔 150ms
-            #     最新票从最下方刷新，click_targets 已按 y 降序(下→上)排好。
-            #     临时关闭 pyautogui.PAUSE(默认0.1s)，用显式 150ms 间隔控制点击节奏。
-            old_pause = pyautogui.PAUSE
-            pyautogui.PAUSE = 0
-            try:
-                for idx, (x, y) in enumerate(click_targets):
-                    pyautogui.click(int(x), int(y))
-                    # 最后一个点完不等待
-                    if idx < len(click_targets) - 1:
-                        time.sleep(0.15)
-            finally:
-                pyautogui.PAUSE = old_pause
-            self._log(
-                f"[抢ticket] 轮{round_cnt} 从下往上点击{len(click_targets)}个坐标 {click_targets}"
-            )
         # running 被置 False（ESC/停止）退出循环
         self._log(f"[抢ticket] 抢票循环被中断(轮{round_cnt})")
         return False
